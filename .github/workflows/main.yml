@@ -1,0 +1,63 @@
+name: GEX Cloud Bot
+
+on:
+  # Disparado pontualmente pelo cron-job.org via API REST do GitHub (sem fila/atrasos do schedule nativo)
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gex_profile_v7_cloud.py'
+      - '.github/workflows/main.yml'
+
+# Garante que duas execuções nunca se atropelem caso um disparo atrase
+concurrency:
+  group: gex-cloud-bot-production
+  cancel-in-progress: false
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install pandas selenium dropbox tzdata
+          mkdir -p ./GEX_Data
+
+      - name: Testar processamento
+        run: python -m unittest -v test_gex_profile_v7_cloud.py
+
+      - name: Verificar Secrets do Dropbox
+        id: check_secrets
+        env:
+          DBX_SECRET: ${{ secrets.DBX_SECRET }}
+          DBX_REFRESH: ${{ secrets.DBX_REFRESH }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -z "$DBX_SECRET" ] || [ -z "$DBX_REFRESH" ]; then
+            if [ "$EVENT_NAME" = "push" ]; then
+              echo "::warning::Secrets DBX_SECRET e DBX_REFRESH ainda não configurados neste repositório (Settings -> Secrets and variables -> Actions). Testes unitários validados; coleta do Dropbox aguardando Secrets."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "::error::Secrets DBX_SECRET e DBX_REFRESH não configurados em Settings -> Secrets and variables -> Actions deste repositório Agendador."
+              exit 1
+            fi
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Executar Motor e Sincronizar Dropbox
+        if: steps.check_secrets.outputs.ready == 'true'
+        env:
+          DBX_SECRET: ${{ secrets.DBX_SECRET }}
+          DBX_REFRESH: ${{ secrets.DBX_REFRESH }}
+        run: python gex_profile_v7_cloud.py

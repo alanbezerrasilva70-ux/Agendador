@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+GEX_Data/
+.venv/
+*.log
